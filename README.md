@@ -11,6 +11,8 @@ and calls to a JavaScript API.
 
 Supports Node.js versions 4, 6 and 8 on AIX, Linux, MacOS, SmartOS and Windows.
 
+**This fork of node-report also supports Node.js version 6 on zOS**
+
 ## Usage
 
 ```bash

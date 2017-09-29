@@ -66,9 +66,15 @@ if (process.argv[2] === 'child') {
     http.get({port: server.address().port});
   });
 } else {
+  // Parent process implementation
   const common = require('./common.js');
   const fork = require('child_process').fork;
   const tap = require('tap');
+
+  if (common.isOS390()) {
+    tap.fail('Unsupported on zOS', { skip: true });
+    return;
+  }
 
   const options = { encoding: 'utf8', silent: true };
   const child = fork(__filename, ['child'], options);

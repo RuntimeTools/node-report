@@ -10,6 +10,7 @@ const osMap = {
   'linux': 'Linux',
   'sunos': 'SunOS',
   'win32': 'Windows',
+  'os390': 'OS/390',
 };
 
 const REPORT_SECTIONS = [
@@ -43,6 +44,10 @@ exports.isSunOS = () => {
 
 exports.isWindows = () => {
   return process.platform === 'win32';
+};
+
+exports.isOS390 = () => {
+  return process.platform === 'os390';
 };
 
 exports.validate = (t, report, options) => {
@@ -167,8 +172,14 @@ exports.validateContent = function validateContent(data, t, options) {
   }
   // Find a line which ends with "/api.node" or "\api.node" (Unix or
   // Windows paths) to see if the library for node report was loaded.
-  t.match(sysInfoSection, /  .*(\/|\\)api\.node/,
-    'System Information section contains node-report library.');
+  if (this.isOS390()) {
+    t.match(sysInfoSection,
+            new RegExp('No library information available on zOS'),
+            'Verifying that library list is not available on zOS');
+  } else {
+    t.match(sysInfoSection, /  .*(\/|\\)api\.node/,
+            'System Information section contains node-report library.');
+  }
 };
 
 const getLibcPath = (section) => {

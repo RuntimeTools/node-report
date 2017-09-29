@@ -10,6 +10,9 @@
 #include <sys/procfs.h>  // psinfo_t structure
 #endif
 
+// Ignore the code-page convert pragma on platforms other than zOS
+#pragma warning (disable: 4068)
+
 namespace nodereport {
 
 /*******************************************************************************
@@ -33,7 +36,9 @@ unsigned int ProcessNodeReportEvents(const char* args) {
       event_flags |= NR_APICALL;
       cursor += sizeof("apicall") - 1;
     } else {
+#pragma convert("IBM-1047")
       std::cerr << "Unrecognised argument for node-report events option: " << cursor << "\n";
+#pragma convert(pop)
       return 0;
     }
     if (*cursor == '+') {
@@ -51,7 +56,9 @@ unsigned int ProcessNodeReportSignal(const char* args) {
   return 0; // no-op on Windows
 #else
   if (strlen(args) == 0) {
+#pragma convert("IBM-1047")
     std::cerr << "Missing argument for node-report signal option\n";
+#pragma convert(pop)
   } else {
     // Parse the supplied switch
     if (!strncmp(args, "SIGUSR2", sizeof("SIGUSR2") - 1)) {
@@ -59,7 +66,9 @@ unsigned int ProcessNodeReportSignal(const char* args) {
     } else if (!strncmp(args, "SIGQUIT", sizeof("SIGQUIT") - 1)) {
       return SIGQUIT;
     } else {
+#pragma convert("IBM-1047")
      std::cerr << "Unrecognised argument for node-report signal option: "<< args << "\n";
+#pragma convert(pop)
     }
   }
   return SIGUSR2;  // Default signal is SIGUSR2
@@ -70,6 +79,7 @@ unsigned int ProcessNodeReportSignal(const char* args) {
  * Function to process node-report config: specification of report file name.
  ******************************************************************************/
 void ProcessNodeReportFileName(const char* args) {
+#pragma convert("IBM-1047")
   if (strlen(args) == 0) {
     std::cerr << "Missing argument for node-report filename option\n";
     return;
@@ -79,12 +89,14 @@ void ProcessNodeReportFileName(const char* args) {
     return;
   }
   snprintf(report_filename, sizeof(report_filename), "%s", args);
+#pragma convert(pop)
 }
 
 /*******************************************************************************
  * Function to process node-report config: specification of report directory.
  ******************************************************************************/
 void ProcessNodeReportDirectory(const char* args) {
+#pragma convert("IBM-1047")
   if (strlen(args) == 0) {
     std::cerr << "Missing argument for node-report directory option\n";
     return;
@@ -93,6 +105,7 @@ void ProcessNodeReportDirectory(const char* args) {
     std::cerr << "Supplied node-report directory path too long (max " << NR_MAXPATH << " characters)\n";
     return;
   }
+#pragma convert(pop)
   snprintf(report_directory, sizeof(report_directory), "%s", args);
 }
 
@@ -101,7 +114,9 @@ void ProcessNodeReportDirectory(const char* args) {
  ******************************************************************************/
 unsigned int ProcessNodeReportVerboseSwitch(const char* args) {
   if (strlen(args) == 0) {
+#pragma convert("IBM-1047")
     std::cerr << "Missing argument for node-report verbose switch option\n";
+#pragma convert(pop)
     return 0;
   }
   // Parse the supplied switch
@@ -110,7 +125,9 @@ unsigned int ProcessNodeReportVerboseSwitch(const char* args) {
   } else if (!strncmp(args, "no", sizeof("no") - 1) || !strncmp(args, "false", sizeof("false") - 1)) {
     return 0;
   } else {
+#pragma convert("IBM-1047")
     std::cerr << "Unrecognised argument for node-report verbose switch option: " << args << "\n";
+#pragma convert(pop)
   }
   return 0;  // Default is verbose mode off
 }
@@ -220,7 +237,7 @@ void SetLoadTime() {
  * Function to save the process command line. This is called during node-report
  * module initialisation.
  *******************************************************************************/
-void SetCommandLine() {
+void SetCommandLine(Isolate* isolate) {
 #ifdef __linux__
   // Read the command line from /proc/self/cmdline
   char buf[64];
@@ -278,6 +295,70 @@ void SetCommandLine() {
   }
 #elif _WIN32
   commandline_string = GetCommandLine();
+#elif __MVS__
+  // On zOS the command line is not available from native API calls so
+  // alternative is to reconstruct it from the Node.js process object
+
+  // Catch anything thrown and gracefully return
+  Nan::TryCatch trycatch;
+  commandline_string = "";
+  std::string commandline_options = "";
+
+  // Retrieve the process object
+  v8::Local<v8::String> process_prop;
+  if (!Nan::New<v8::String>("process").ToLocal(&process_prop)) return;
+  v8::Local<v8::Object> global_obj = isolate->GetCurrentContext()->Global();
+  v8::Local<v8::Value> process_value;
+  if (!Nan::Get(global_obj, process_prop).ToLocal(&process_value)) return;
+  if (!process_value->IsObject()) return;
+  v8::Local<v8::Object> process_obj = process_value.As<v8::Object>();
+
+  // Get process.execArgv
+  v8::Local<v8::String> execArgv_prop;
+  if (!Nan::New<v8::String>("execArgv").ToLocal(&execArgv_prop)) return;
+  v8::Local<v8::Value> execArgv;
+  if (!Nan::Get(process_obj, execArgv_prop).ToLocal(&execArgv)) return;
+
+  if (execArgv->IsArray()) {
+    v8::Local<v8::Array> execArgv_array = v8::Local<v8::Array>::Cast(execArgv);
+    for (unsigned int i = 0; i < execArgv_array->Length(); i++) {
+      v8::Handle<v8::Value> execArgv_val = execArgv_array->Get(i);
+      if (execArgv_val->IsString()) {
+        Nan::Utf8String execArgv_string(execArgv_val);
+        commandline_options += *execArgv_string;
+        commandline_options += " ";
+      }
+    }
+  }
+
+  // Get process.argv
+  v8::Local<v8::String> argv_prop;
+  if (!Nan::New<v8::String>("argv").ToLocal(&argv_prop)) return;
+  v8::Local<v8::Value> argv;
+  if (!Nan::Get(process_obj, argv_prop).ToLocal(&argv)) return;
+
+  if (argv->IsArray()) {
+    v8::Local<v8::Array> argv_array = v8::Local<v8::Array>::Cast(argv);
+    for (unsigned int i = 0; i < argv_array->Length(); i++) {
+      v8::Handle<v8::Value> argv_val = argv_array->Get(i);
+      if (argv_val->IsString()) {
+        Nan::Utf8String argv_string(argv_val);
+        commandline_string += *argv_string;
+        commandline_string += " ";
+        if (i == 0) {
+          // insert the Node.js command line options here
+          commandline_string += commandline_options;
+        }
+      }
+    }
+  }
+
+  // Convert command line string to EBCDIC
+  char* buffer = (char*) malloc(commandline_string.length() + 1);
+  strcpy(buffer, commandline_string.c_str());
+  __atoe(buffer);
+  commandline_string = buffer;
+  free(buffer);
 #endif
 }
 
@@ -285,6 +366,7 @@ void SetCommandLine() {
  * Utility function to format libuv socket information.
  *******************************************************************************/
 void reportEndpoints(uv_handle_t* h, std::ostringstream& out) {
+#pragma convert("IBM-1047")
   struct sockaddr_storage addr_storage;
   struct sockaddr* addr = (sockaddr*)&addr_storage;
   char hostbuf[NI_MAXHOST];
@@ -327,12 +409,14 @@ void reportEndpoints(uv_handle_t* h, std::ostringstream& out) {
       }
     }
   }
+#pragma convert(pop)
 }
 
 /*******************************************************************************
  * Utility function to format libuv path information.
  *******************************************************************************/
 void reportPath(uv_handle_t* h, std::ostringstream& out) {
+#pragma convert("IBM-1047")
   char *buffer = nullptr;
   int rc = -1;
   size_t size = 0;
@@ -369,12 +453,14 @@ void reportPath(uv_handle_t* h, std::ostringstream& out) {
     }
     free(buffer);
   }
+#pragma convert(pop)
 }
 
 /*******************************************************************************
  * Utility function to walk libuv handles.
  *******************************************************************************/
 void walkHandle(uv_handle_t* h, void* arg) {
+#pragma convert("IBM-1047")
   std::string type;
   std::ostringstream data;
   std::ostream* out = reinterpret_cast<std::ostream*>(arg);
@@ -516,12 +602,14 @@ void walkHandle(uv_handle_t* h, void* arg) {
   *out << static_cast<void*>(h) << std::left;
   out->fill(prev_fill);
   *out << "  " << std::left << data.str() << std::endl;
+#pragma convert(pop)
 }
 
 /*******************************************************************************
  * Utility function to print out integer values with commas for readability.
  ******************************************************************************/
 void WriteInteger(std::ostream& out, size_t value) {
+#pragma convert("IBM-1047")
   int thousandsStack[8];  // Sufficient for max 64-bit number
   int stackTop = 0;
   int i;
@@ -544,6 +632,7 @@ void WriteInteger(std::ostream& out, size_t value) {
       out << ",";
     }
   }
+#pragma convert(pop)
 }
 
 /*******************************************************************************

@@ -67,7 +67,7 @@ void ProcessNodeReportDirectory(const char* args);
 unsigned int ProcessNodeReportVerboseSwitch(const char* args);
 void SetLoadTime();
 void SetVersionString(Isolate* isolate);
-void SetCommandLine();
+void SetCommandLine(Isolate* isolate);
 void reportEndpoints(uv_handle_t* h, std::ostringstream& out);
 void reportPath(uv_handle_t* h, std::ostringstream& out);
 void walkHandle(uv_handle_t* h, void* arg);

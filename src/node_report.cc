@@ -32,9 +32,9 @@
 #ifdef _AIX
 #include <sys/ldr.h>  // ld_info structure
 #endif
-// Include execinfo.h for the native backtrace API. The API is unavailable on AIX
+// Include execinfo.h for the native backtrace API. The API is unavailable on AIX, zOS
 // and on some Linux distributions, e.g. Alpine Linux.
-#if !defined(_AIX) && !(defined(__linux__) && !defined(__GLIBC__))
+#if !defined(_AIX) && !(defined(__linux__) && !defined(__GLIBC__)) && !defined(__MVS__)
 #include <execinfo.h>
 #endif
 #include <sys/utsname.h>
@@ -48,7 +48,12 @@
 extern char** environ;
 #endif
 
+// Ignore the code-page convert pragma on platforms other than zOS
+#pragma warning (disable: 4068)
+
 namespace nodereport {
+
+#pragma convert("IBM-1047")
 
 using v8::HeapSpaceStatistics;
 using v8::HeapStatistics;
@@ -224,7 +229,16 @@ static void WriteNodeReport(Isolate* isolate, DumpEvent event, const char* messa
   // and header information (event, filename, timestamp and pid)
   out << "================================================================================\n";
   out << "==== Node Report ===============================================================\n";
+#ifdef __MVS__
+  // Convert message string to EBCDIC
+  char* buffer = (char*) malloc(strlen(message) + 1);
+  strcpy(buffer, message);
+  __atoe(buffer);
+  out << "\nEvent: " << buffer << ", location: \"" << location << "\"\n";
+  free(buffer);
+#else
   out << "\nEvent: " << message << ", location: \"" << location << "\"\n";
+#endif
   if( filename != nullptr ) {
     out << "Filename: " << filename << "\n";
   }
@@ -323,12 +337,31 @@ static void PrintCommandLine(std::ostream& out) {
 static void PrintVersionInformation(std::ostream& out) {
 
   // Print Node.js and deps component versions
+#ifdef __MVS__
+  // Convert runtime version string to EBCDIC
+  char* buffer = (char*) malloc(version_string.length() + 1);
+  strcpy(buffer, version_string.c_str());
+  __atoe(buffer);
+  out << "\n" << buffer;
+  free(buffer);
+#else
   out << "\n" << version_string;
+#endif
 
   // Print node-report module version
   // e.g. node-report version: 1.0.6 (built against Node.js v6.9.1)
+#ifdef __MVS__
+  // Convert compiled version string to EBCDIC
+  buffer = (char*) malloc(strlen(NODE_VERSION_STRING) + 1);
+  strcpy(buffer, NODE_VERSION_STRING);
+  __atoe(buffer);
+  out << std::endl << "node-report version: " << NODEREPORT_VERSION
+      << " (built against Node.js v" << buffer;
+  free(buffer);
+#else
   out << std::endl << "node-report version: " << NODEREPORT_VERSION
       << " (built against Node.js v" << NODE_VERSION_STRING;
+#endif
 #if defined(__GLIBC__)
   out << ", glibc " << __GLIBC__ << "." << __GLIBC_MINOR__;
 #endif
@@ -408,6 +441,17 @@ static void PrintVersionInformation(std::ostream& out) {
         out << "\nMachine: " << machine_name << "\n";
       }
     }
+  }
+#elif defined(__MVS__)
+  // Print operating system and machine information (zOS)
+  struct utsname os_info;
+  if (uname(&os_info) >= 0) {
+    out << "\nOS version: " << os_info.sysname << " " << os_info.release << " "
+        << os_info.version << "\n";
+  }
+  char machine_name[256];
+  if (gethostname(machine_name, sizeof(machine_name)) == 0) {
+    out << "\nMachine: " << machine_name << "\n";
   }
 #else
   // Print operating system and machine information (Unix/OSX)
@@ -500,7 +544,16 @@ static void PrintJavaScriptErrorStack(std::ostream& out, Isolate* isolate, Maybe
 #endif
   Nan::Utf8String message_str(message->Get());
 
+#ifdef __MVS__
+  // Convert exception message string to EBCDIC
+  char* buffer = (char*) malloc(strlen(*message_str) + 1);
+  strcpy(buffer, *message_str);
+  __atoe(buffer);
+  out << buffer << "\n\n";
+  free(buffer);
+#else
   out << *message_str << "\n\n";
+#endif
 
   Local<StackTrace> stack = v8::Exception::GetStackTrace(error.ToLocalChecked());
   if (stack.IsEmpty()) {
@@ -574,6 +627,39 @@ static void PrintStackFrame(std::ostream& out, Isolate* isolate, Local<StackFram
   }
 
   // Now print the JavaScript function name and source information
+#ifdef __MVS__
+  // Convert function and script names to EBCDIC
+  char* fn_name_ebcdic = (char*) malloc(strlen(*fn_name_s) + 1);
+  strcpy(fn_name_ebcdic, *fn_name_s);
+  __atoe(fn_name_ebcdic);
+  char* script_name_ebcdic = (char*) malloc(strlen(*script_name) + 1);
+  strcpy(script_name_ebcdic, *fn_name_s);
+  __atoe(script_name_ebcdic);
+
+  if (frame->IsEval()) {
+    if (frame->GetScriptId() == Message::kNoScriptIdInfo) {
+      out << "at [eval]:" << line_number << ":" << column << "\n";
+    } else {
+      out << "at [eval] (" << script_name_ebcdic << ":" << line_number << ":"
+          << column << ")\n";
+    }
+    return;
+  }
+
+  if (fn_name_s.length() == 0) {
+    out << script_name_ebcdic << ":" << line_number << ":" << column << "\n";
+  } else {
+    if (frame->IsConstructor()) {
+      out << fn_name_ebcdic << " [constructor] (" << script_name_ebcdic << ":"
+          << line_number << ":" << column << ")\n";
+    } else {
+      out << fn_name_ebcdic << " (" << script_name_ebcdic << ":" << line_number << ":"
+          << column << ")\n";
+    }
+  }
+  free(fn_name_ebcdic);
+  free(script_name_ebcdic);
+#else
   if (frame->IsEval()) {
     if (frame->GetScriptId() == Message::kNoScriptIdInfo) {
       out << "at [eval]:" << line_number << ":" << column << "\n";
@@ -595,6 +681,7 @@ static void PrintStackFrame(std::ostream& out, Isolate* isolate, Local<StackFram
           << column << ")\n";
     }
   }
+#endif
 }
 
 
@@ -650,6 +737,16 @@ void PrintNativeStack(std::ostream& out) {
   out << "\n================================================================================";
   out << "\n==== Native Stack Trace ========================================================\n\n";
   out << "Native stack trace not supported on AIX\n";
+}
+#elif __MVS__
+/*******************************************************************************
+ * Function to print a native stack backtrace - zOS
+ *
+ ******************************************************************************/
+void PrintNativeStack(std::ostream& out) {
+  out << "\n================================================================================";
+  out << "\n==== Native Stack Trace ========================================================\n\n";
+  out << "Native stack trace not supported on zOS\n";
 }
 #elif (defined(__linux__) && !defined(__GLIBC__))
 /*******************************************************************************
@@ -725,7 +822,15 @@ static void PrintGCStatistics(std::ostream& out, Isolate* isolate) {
   // Loop through heap spaces
   for (size_t i = 0; i < isolate->NumberOfHeapSpaces(); i++) {
     isolate->GetHeapSpaceStatistics(&v8_heap_space_stats, i);
+#ifdef __MVS__
+    char* buffer = (char*) malloc(strlen(v8_heap_space_stats.space_name()) + 1);
+    strcpy(buffer, v8_heap_space_stats.space_name());
+    __atoe(buffer);
+    out << "\nHeap space name: " << buffer;
+    free(buffer);
+#else
     out << "\nHeap space name: " << v8_heap_space_stats.space_name();
+#endif
     out << "\n    Memory size: ";
     WriteInteger(out, v8_heap_space_stats.space_size());
     out << " bytes, committed memory: ";
@@ -774,7 +879,7 @@ static void PrintResourceUsage(std::ostream& out) {
   struct rusage stats;
   out << "\nProcess total resource usage:";
   if (getrusage(RUSAGE_SELF, &stats) == 0) {
-#if defined(__APPLE__) || defined(_AIX)
+#if defined(__APPLE__) || defined(_AIX) || defined(__MVS__)
     snprintf( buf, sizeof(buf), "%ld.%06d", stats.ru_utime.tv_sec, stats.ru_utime.tv_usec);
     out << "\n  User mode CPU: " << buf << " secs";
     snprintf( buf, sizeof(buf), "%ld.%06d", stats.ru_stime.tv_sec, stats.ru_stime.tv_usec);
@@ -788,12 +893,14 @@ static void PrintResourceUsage(std::ostream& out) {
     cpu_abs = stats.ru_utime.tv_sec + 0.000001 * stats.ru_utime.tv_usec + stats.ru_stime.tv_sec + 0.000001 *  stats.ru_stime.tv_usec;
     cpu_percentage = (cpu_abs / uptime) * 100.0;
     out << "\n  Average CPU Consumption : "<< cpu_percentage << "%";
+#if !defined(__MVS__)
     out << "\n  Maximum resident set size: ";
     WriteInteger(out, stats.ru_maxrss * 1024);
     out << " bytes\n  Page faults: " << stats.ru_majflt << " (I/O required) "
         << stats.ru_minflt << " (no I/O required)";
     out << "\n  Filesystem activity: " << stats.ru_inblock << " reads "
         <<  stats.ru_oublock << " writes";
+#endif
   }
 #ifdef RUSAGE_THREAD
   out << "\n\nEvent loop thread resource usage:";
@@ -861,16 +968,16 @@ const static struct {
   {"core file size (blocks)       ", RLIMIT_CORE},
   {"data seg size (kbytes)        ", RLIMIT_DATA},
   {"file size (blocks)            ", RLIMIT_FSIZE},
-#if !(defined(_AIX) || defined(__sun))
+#if !(defined(_AIX) || defined(__sun) || defined(__MVS__))
   {"max locked memory (bytes)     ", RLIMIT_MEMLOCK},
 #endif
-#ifndef __sun
+#if !(defined(__sun) || defined(__MVS__))
   {"max memory size (kbytes)      ", RLIMIT_RSS},
 #endif
   {"open files                    ", RLIMIT_NOFILE},
   {"stack size (bytes)            ", RLIMIT_STACK},
   {"cpu time (seconds)            ", RLIMIT_CPU},
-#ifndef __sun
+#if !(defined(__sun) || defined(__MVS__))
   {"max user processes            ", RLIMIT_NPROC},
 #endif
   {"virtual memory (kbytes)       ", RLIMIT_AS}
@@ -886,7 +993,7 @@ const static struct {
       if (limit.rlim_cur == RLIM_INFINITY) {
         out << "       unlimited";
       } else {
-#if defined(_AIX) || defined(__sun)
+#if defined(_AIX) || defined(__sun) || defined(__MVS__)
         snprintf(buf, sizeof(buf), "%16ld", limit.rlim_cur);
         out << buf;
 #elif (defined(__linux__) && !defined(__GLIBC__))
@@ -900,7 +1007,7 @@ const static struct {
       if (limit.rlim_max == RLIM_INFINITY) {
         out << "       unlimited\n";
       } else {
-#if defined(_AIX)
+#if defined(_AIX) || defined(__MVS__)
         snprintf(buf, sizeof(buf), "%16ld\n", limit.rlim_max);
         out << buf;
 #elif (defined(__linux__) && !defined(__GLIBC__))
@@ -1023,7 +1130,10 @@ static void PrintLoadedLibraries(std::ostream& out, Isolate* isolate) {
   }
   // Release the handle to the process.
   CloseHandle(process_handle);
+#elif __MVS__
+  out << "  No library information available on zOS\n";
 #endif
 }
 
+#pragma convert(pop)
 }  // namespace nodereport
