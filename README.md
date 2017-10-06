@@ -11,12 +11,12 @@ and calls to a JavaScript API.
 
 Supports Node.js versions 4, 6 and 8 on AIX, Linux, MacOS, SmartOS and Windows.
 
-**This fork of node-report also supports Node.js version 6 on zOS.**
+**This fork of node-report supports IBM SDK for Node.js - z/OS. See installation instructions below.**
 
 ## Usage
 
 ```bash
-**npm install https://github.com/RuntimeTools/node-report/archive/v2.2.1-zos.tar.gz**
+npm install https://github.com/RuntimeTools/node-report/archive/v2.2.1-zos.tar.gz
 node -r node-report app.js
 ```
 A report will be triggered automatically on unhandled exceptions and fatal
